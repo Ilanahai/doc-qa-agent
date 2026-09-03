@@ -1,0 +1,11 @@
+Customer Segmentation in Marketing Project
+ 
+This project applies unsupervised machine learning to segment customers
+based on purchasing behavior and demographic data. Using Python, the raw
+customer dataset is first cleaned to handle missing values and outliers.
+Features such as recency, frequency, and monetary value (RFM) are
+engineered from transaction history. K-Means clustering is then applied
+to group customers into distinct segments, such as high-value frequent
+buyers, occasional shoppers, and at-risk customers who have not purchased
+recently.
+ 
