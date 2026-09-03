@@ -1,0 +1,33 @@
+name: CI
+
+# Runs on every push and pull request to main.
+# This is the CI/CD pipeline: it installs dependencies, then runs the
+# test suite to verify the FastAPI app starts and responds correctly
+# before any change is considered safe to merge/deploy.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: pytest test_api.py -v
