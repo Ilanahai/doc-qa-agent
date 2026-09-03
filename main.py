@@ -1,133 +1,71 @@
 """
-rag_chain.py — LangChain-based RAG chain.
+main.py — FastAPI service exposing the LangChain RAG chain.
 
-Wraps the retrieval + generation logic (from the earlier "Ask My Docs"
-mini-project) inside a LangChain chain, so it can be reused as a proper
-agent component rather than raw function calls.
+Endpoints:
+  GET  /health        — health check (used by CI/CD)
+  POST /ask            — ask a question, get a grounded answer
 
-Chain structure:
-  retriever (ChromaDB + sentence-transformers embeddings)
-        │
-        ▼
-  prompt template (injects retrieved context + question)
-        │
-        ▼
-  LLM (Gemini, via LangChain's ChatGoogleGenerativeAI)
-        │
-        ▼
-  output parser (plain string answer)
+Run locally:
+  pip install -r requirements.txt
+  export GEMINI_API_KEY="your_key"
+  uvicorn main:app --reload
+
+Then:
+  curl -X POST http://127.0.0.1:8000/ask \
+       -H "Content-Type: application/json" \
+       -d '{"question": "What tool was used for dashboards in the Tokyo Olympics project?"}'
 """
 
-import os
-import glob
-import chromadb
-from sentence_transformers import SentenceTransformer
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from contextlib import asynccontextmanager
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough
-from langchain_google_genai import ChatGoogleGenerativeAI
+from rag_chain import DocRetriever, build_rag_chain
 
-
-DOCS_FOLDER = "docs"
-CHUNK_SIZE = 300
-CHUNK_OVERLAP = 50
-TOP_K = 3
-EMBED_MODEL = "all-MiniLM-L6-v2"
+# Global state, initialized once at startup (avoids re-embedding docs per request)
+state = {}
 
 
-class DocRetriever:
-    """Loads, chunks, and embeds documents; retrieves top-k relevant chunks for a query."""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: build the retriever and chain once
+    retriever = DocRetriever()
+    state["retriever"] = retriever
+    try:
+        state["chain"] = build_rag_chain(retriever)
+    except EnvironmentError:
+        # Allow the app to start even without an API key set,
+        # so /health still works — /ask will report the issue clearly.
+        state["chain"] = None
+    yield
+    state.clear()
 
-    def __init__(self, folder_path=DOCS_FOLDER):
-        self.embed_model = SentenceTransformer(EMBED_MODEL)
-        self.client = chromadb.Client()
-        try:
-            self.client.delete_collection("doc_qa")
-        except Exception:
-            pass
-        self.collection = self.client.create_collection("doc_qa")
-        self._load_and_index(folder_path)
 
-    def _load_and_index(self, folder_path):
-        chunks, metadata = [], []
-        filepaths = glob.glob(os.path.join(folder_path, "*.txt"))
-        if not filepaths:
-            raise FileNotFoundError(f"No .txt files found in '{folder_path}'.")
+app = FastAPI(title="Doc Q&A Agent", lifespan=lifespan)
 
-        for filepath in filepaths:
-            with open(filepath, "r", encoding="utf-8") as f:
-                text = f.read()
-            words = text.split()
-            start = 0
-            while start < len(words):
-                end = start + CHUNK_SIZE
-                chunks.append(" ".join(words[start:end]))
-                metadata.append({"source": os.path.basename(filepath)})
-                start += CHUNK_SIZE - CHUNK_OVERLAP
 
-        embeddings = self.embed_model.encode(chunks, show_progress_bar=False).tolist()
-        self.collection.add(
-            embeddings=embeddings,
-            documents=chunks,
-            metadatas=metadata,
-            ids=[f"chunk_{i}" for i in range(len(chunks))],
+class AskRequest(BaseModel):
+    question: str
+
+
+class AskResponse(BaseModel):
+    answer: str
+    sources: list[str]
+
+
+@app.get("/health")
+def health():
+    """Simple health check — used by the CI/CD pipeline to verify the app starts correctly."""
+    return {"status": "ok", "chain_ready": state.get("chain") is not None}
+
+
+@app.post("/ask", response_model=AskResponse)
+def ask(request: AskRequest):
+    if state.get("chain") is None:
+        raise HTTPException(
+            status_code=503,
+            detail="RAG chain not initialized — GEMINI_API_KEY is not set on the server.",
         )
 
-    def retrieve(self, query: str, top_k: int = TOP_K):
-        query_embedding = self.embed_model.encode([query]).tolist()
-        results = self.collection.query(query_embeddings=query_embedding, n_results=top_k)
-        docs = results["documents"][0]
-        sources = [m["source"] for m in results["metadatas"][0]]
-        return docs, sources
-
-
-def format_context(retrieval_result):
-    docs, sources = retrieval_result
-    context = "\n\n".join(
-        f"[Source: {src}]\n{chunk}" for chunk, src in zip(docs, sources)
-    )
-    return {"context": context, "sources": sources}
-
-
-
-def build_rag_chain(retriever: DocRetriever):
-    """Builds a LangChain runnable chain: retrieve -> prompt -> LLM -> parse."""
-
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        raise EnvironmentError(
-            "GEMINI_API_KEY not set. Get a free key at https://aistudio.google.com/app/apikey"
-        )
-
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
-
-    prompt = ChatPromptTemplate.from_template(
-        """Answer the question using ONLY the context below.
-If the answer isn't in the context, say you don't know.
-
-Context:
-{context}
-
-Question: {question}
-
-Answer:"""
-    )
-
-    def retrieve_and_format(inputs):
-        query = inputs["question"]
-        result = retriever.retrieve(query)
-        formatted = format_context(result)
-        return {"context": formatted["context"], "question": query, "sources": formatted["sources"]}
-
-    chain = (
-        RunnableLambda(retrieve_and_format)
-        | RunnablePassthrough.assign(
-            answer=(lambda x: {"context": x["context"], "question": x["question"]})
-            | prompt
-            | llm
-            | StrOutputParser()
-        )
-    )
-
-    return chain
+    result = state["chain"].invoke({"question": request.question})
+    return AskResponse(answer=result["answer"], sources=result["sources"])
