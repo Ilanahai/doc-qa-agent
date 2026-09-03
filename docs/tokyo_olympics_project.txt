@@ -1,0 +1,12 @@
+Tokyo Olympics Data Pipeline Project
+
+This project builds an end-to-end data pipeline on Microsoft Azure to process
+Tokyo Olympics datasets. Raw data is ingested using Azure Data Factory, which
+pulls files from a source storage location and lands them in a bronze layer
+of the data lake. Azure Databricks is then used to clean, transform, and
+validate the data, handling missing values, correcting data types, and
+joining multiple source tables such as athletes, coaches, teams, and medals.
+The transformed data is written to a curated layer and served through Azure
+Synapse Analytics for querying. Finally, Power BI connects to Synapse to
+build interactive dashboards showing medal counts by country, athlete
+demographics, and event participation trends.
