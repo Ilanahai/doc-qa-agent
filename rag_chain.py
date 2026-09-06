@@ -99,7 +99,7 @@ def build_rag_chain(retriever: DocRetriever):
             "GEMINI_API_KEY not set. Get a free key at https://aistudio.google.com/app/apikey"
         )
 
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
+    llm = ChatGoogleGenerativeAI(model="gemini-flash-latest", google_api_key=api_key)
 
     prompt = ChatPromptTemplate.from_template(
         """Answer the question using ONLY the context below.
