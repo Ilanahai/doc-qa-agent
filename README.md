@@ -118,3 +118,15 @@ this repo to GitHub and the "Actions" tab will show it running.
 - `docs/customer_segmentation_project.txt`
 
 Try asking: *"What tool was used for dashboards in the Tokyo Olympics project?"*
+
+
+
+## Demo Screenshots
+
+![Result 1](Result/1.png)
+![Result 2](Result/2.png)
+![Result 3](Result/3.png)
+![Result 4](Result/4.png)
+![Result 5](Result/5.png)
+![Result 6](Result/6.png)
+![Result 7](Result/7.png)
